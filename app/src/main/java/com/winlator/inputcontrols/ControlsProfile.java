@@ -211,14 +211,22 @@ public class ControlsProfile implements Comparable<ControlsProfile> {
                 controller.setId(id);
                 controller.setName(controllerJSONObject.getString("name"));
 
-                JSONArray controllerBindingsJSONArray = controllerJSONObject.getJSONArray("controllerBindings");
-                for (int j = 0; j < controllerBindingsJSONArray.length(); j++) {
-                    JSONObject controllerBindingJSONObject = controllerBindingsJSONArray.getJSONObject(j);
-                    ExternalControllerBinding controllerBinding = new ExternalControllerBinding();
-                    controllerBinding.setKeyCode(controllerBindingJSONObject.getInt("keyCode"));
-                    controllerBinding.setBinding(Binding.fromString(controllerBindingJSONObject.getString("binding")));
-                    controller.addControllerBinding(controllerBinding);
+                JSONArray controllerBindingsJSONArray = controllerJSONObject.optJSONArray("controllerBindings");
+                if (controllerBindingsJSONArray != null) {
+                    for (int j = 0; j < controllerBindingsJSONArray.length(); j++) {
+                        JSONObject controllerBindingJSONObject = controllerBindingsJSONArray.getJSONObject(j);
+                        ExternalControllerBinding controllerBinding = new ExternalControllerBinding();
+                        controllerBinding.setKeyCode(controllerBindingJSONObject.getInt("keyCode"));
+                        controllerBinding.setBinding(Binding.fromString(controllerBindingJSONObject.getString("binding")));
+                        controller.addControllerBinding(controllerBinding);
+                    }
                 }
+
+                JSONObject axisSettingsJson = controllerJSONObject.optJSONObject("axisSettings");
+                if (axisSettingsJson != null) {
+                    controller.setAxisSettings(ControllerAxisSettings.fromJSONObject(axisSettingsJson));
+                }
+
                 controllers.add(controller);
             }
             controllersLoaded = true;
@@ -237,9 +245,11 @@ public class ControlsProfile implements Comparable<ControlsProfile> {
         virtualGamepad = false;
 
         // Check if view has valid dimensions before loading
-        if (inputControlsView.getMaxWidth() == 0 || inputControlsView.getMaxHeight() == 0) {
+        int viewW = inputControlsView.getWidth();
+        int viewH = inputControlsView.getHeight();
+        if (viewW == 0 || viewH == 0) {
             Log.w("ControlsProfile", "Cannot load elements - view has no dimensions yet (width: " +
-                inputControlsView.getWidth() + ", height: " + inputControlsView.getHeight() + ")");
+                viewW + ", height: " + viewH + ")");
             return;
         }
 

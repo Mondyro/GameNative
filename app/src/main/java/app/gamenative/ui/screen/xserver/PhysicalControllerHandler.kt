@@ -7,6 +7,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import com.winlator.inputcontrols.Binding
 import com.winlator.inputcontrols.ControlElement
+import com.winlator.inputcontrols.ControllerAxisSettings
 import com.winlator.inputcontrols.ControlsProfile
 import com.winlator.inputcontrols.ExternalController
 import com.winlator.inputcontrols.ExternalControllerBinding
@@ -83,11 +84,15 @@ class PhysicalControllerHandler(
      * Extracted from InputControlsView.onKeyEvent()
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
-        if (profile != null && event.repeatCount == 0) {
+        if (profile != null) {
             val controller = profile?.getController(event.deviceId)
             if (controller != null) {
                 val controllerBinding = controller.getControllerBinding(event.keyCode)
                 if (controllerBinding != null) {
+                    // Consume auto-repeat events so they don't fall through to the keyboard queue and cause rapid-fire toggling
+                    if (event.repeatCount > 0) {
+                        return true
+                    }
                     // Some controllers emit BOTH a digital KeyEvent for L2/R2 and an analog axis value in MotionEvent.
                     // If this physical key is mapped to a virtual trigger AND the device exposes trigger axes,
                     // ignore the KeyEvent to avoid an initial "full press" spike. MotionEvent will provide the analog value.
@@ -140,27 +145,109 @@ class PhysicalControllerHandler(
         if (profile != null) {
             val controller = profile?.getController(event.deviceId)
             if (controller != null && controller.updateStateFromMotionEvent(event)) {
-                // Process trigger buttons (L2/R2)
+                val axisSettings = controller.axisSettings ?: ControllerAxisSettings()
+
+                // Process trigger buttons (L2/R2) with analog curve/deadzone/cutoff and hair trigger support
+                val rawL = controller.state.triggerL
+                val rawR = controller.state.triggerR
+
+                val processedL = if (axisSettings.leftTriggerHairTrigger) {
+                    if (rawL >= axisSettings.leftTriggerThreshold) 1.0f else 0.0f
+                } else {
+                    if (rawL <= axisSettings.leftTriggerDeadzone) {
+                        0f
+                    } else {
+                        val denom = (axisSettings.leftTriggerCutoff - axisSettings.leftTriggerDeadzone).coerceAtLeast(0.01f)
+                        val normalized = ((rawL - axisSettings.leftTriggerDeadzone) / denom).coerceIn(0f, 1f)
+                        Math.pow(normalized.toDouble(), axisSettings.leftTriggerCurve.toDouble()).toFloat().coerceIn(0f, 1f)
+                    }
+                }
+
+                val processedR = if (axisSettings.rightTriggerHairTrigger) {
+                    if (rawR >= axisSettings.rightTriggerThreshold) 1.0f else 0.0f
+                } else {
+                    if (rawR <= axisSettings.rightTriggerDeadzone) {
+                        0f
+                    } else {
+                        val denom = (axisSettings.rightTriggerCutoff - axisSettings.rightTriggerDeadzone).coerceAtLeast(0.01f)
+                        val normalized = ((rawR - axisSettings.rightTriggerDeadzone) / denom).coerceIn(0f, 1f)
+                        Math.pow(normalized.toDouble(), axisSettings.rightTriggerCurve.toDouble()).toFloat().coerceIn(0f, 1f)
+                    }
+                }
+
                 var controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_L2)
                 if (controllerBinding != null) {
                     handleInputEvent(
                         controllerBinding.binding,
-                        controller.state.triggerL > 0f,
-                        controller.state.triggerL
+                        processedL > 0f,
+                        processedL
                     )
                 }
 
-                controllerBinding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_R2)
-                if (controllerBinding != null) {
+                val r2Binding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_R2)
+                if (r2Binding != null) {
                     handleInputEvent(
-                        controllerBinding.binding,
-                        controller.state.triggerR > 0f,
-                        controller.state.triggerR
+                        r2Binding.binding,
+                        processedR > 0f,
+                        processedR
                     )
                 }
 
-                // Process analog stick input
-                processJoystickInput(controller)
+                // Process analog stick input and obtain processed stick vectors
+                val (procLX, procLY, procRX, procRY) = processJoystickInput(controller)
+
+                // ──── Conditionally sync processed axes to profile.gamepadState ────
+                // Only sync axes whose bindings are gamepad bindings (or unbound).
+                // If an axis is mapped to mouse/keyboard, do NOT write to gamepadState
+                // to avoid "double input" (e.g. mouse move AND virtual stick simultaneously).
+                val gamepadState = profile?.gamepadState
+                if (gamepadState != null) {
+                    // Check if left stick axes have gamepad bindings (or no bindings)
+                    val lxPosBinding = controller.getControllerBinding(
+                        ExternalControllerBinding.getKeyCodeForAxis(MotionEvent.AXIS_X, 1.toByte()))
+                    val lxNegBinding = controller.getControllerBinding(
+                        ExternalControllerBinding.getKeyCodeForAxis(MotionEvent.AXIS_X, (-1).toByte()))
+                    val leftStickIsGamepad = (lxPosBinding == null || lxPosBinding.binding.isGamepad) &&
+                                             (lxNegBinding == null || lxNegBinding.binding.isGamepad)
+                    if (leftStickIsGamepad) {
+                        gamepadState.thumbLX = procLX
+                        gamepadState.thumbLY = procLY
+                    }
+
+                    // Check right stick axes
+                    val rxPosBinding = controller.getControllerBinding(
+                        ExternalControllerBinding.getKeyCodeForAxis(MotionEvent.AXIS_Z, 1.toByte()))
+                    val rxNegBinding = controller.getControllerBinding(
+                        ExternalControllerBinding.getKeyCodeForAxis(MotionEvent.AXIS_Z, (-1).toByte()))
+                    val rightStickIsGamepad = (rxPosBinding == null || rxPosBinding.binding.isGamepad) &&
+                                              (rxNegBinding == null || rxNegBinding.binding.isGamepad)
+                    if (rightStickIsGamepad) {
+                        gamepadState.thumbRX = procRX
+                        gamepadState.thumbRY = procRY
+                    }
+
+                    // Triggers: sync if binding is default gamepad trigger or unbound
+                    val l2Binding = controller.getControllerBinding(KeyEvent.KEYCODE_BUTTON_L2)
+                    if (l2Binding == null || l2Binding.binding == Binding.GAMEPAD_BUTTON_L2) {
+                        gamepadState.triggerL = processedL
+                        gamepadState.setPressed(ExternalController.IDX_BUTTON_L2.toInt(), processedL > 0f)
+                    }
+                    if (r2Binding == null || r2Binding.binding == Binding.GAMEPAD_BUTTON_R2) {
+                        gamepadState.triggerR = processedR
+                        gamepadState.setPressed(ExternalController.IDX_BUTTON_R2.toInt(), processedR > 0f)
+                    }
+
+                    // ──── Keep WinHandler's controller.state in sync with gamepadState ────
+                    // This is the core fix for the dropped-input bug: when WinHandler.onKeyEvent
+                    // later runs as a fallback for unmapped buttons and calls sendMemoryFileState(),
+                    // controller.state will already have correct stick/trigger values instead of
+                    // stale zeroes, so held inputs won't be clobbered.
+                    val winHandler = xServer?.winHandler
+                    val currentCtrl = winHandler?.getCurrentController()
+                    if (currentCtrl != null) {
+                        currentCtrl.state.copy(gamepadState)
+                    }
+                }
 
                 val winHandler = xServer?.winHandler
                 val state = profile?.gamepadState
@@ -226,10 +313,11 @@ class PhysicalControllerHandler(
         scrollRepeatTimer = Timer()
         scrollRepeatTimer?.schedule(object : TimerTask() {
             override fun run() {
-                val bindings = synchronized(scrollRepeatLock) {
-                    activeScrollBindings.toList()
+                synchronized(scrollRepeatLock) {
+                    for (b in activeScrollBindings) {
+                        sendScrollPulse(b)
+                    }
                 }
-                bindings.forEach { sendScrollPulse(it) }
             }
         }, SCROLL_REPEAT_INTERVAL_MS, SCROLL_REPEAT_INTERVAL_MS)
     }
@@ -247,65 +335,184 @@ class PhysicalControllerHandler(
     }
 
     private fun sendScrollPulse(binding: Binding) {
-        val pointerButton = binding.pointerButton ?: return
-        xServer?.injectPointerButtonPress(pointerButton)
-        xServer?.injectPointerButtonRelease(pointerButton)
+        val button = binding.pointerButton ?: return
+        xServer?.injectPointerButtonPress(button)
+        xServer?.injectPointerButtonRelease(button)
     }
 
     /**
-     * Process analog stick input and apply bindings.
+     * Process physical joystick input, applying deadzone, sensitivity, and response curves.
      * Extracted from InputControlsView.processJoystickInput()
      */
-    private fun processJoystickInput(controller: ExternalController) {
+    private fun processJoystickInput(controller: ExternalController): FloatArray {
         // Reset mouse movement offset at the start - contributions will be added during processing
         mouseMoveOffset.set(0f, 0f)
 
-        val axes = intArrayOf(
-            MotionEvent.AXIS_X,
-            MotionEvent.AXIS_Y,
-            MotionEvent.AXIS_Z,
-            MotionEvent.AXIS_RZ,
-            MotionEvent.AXIS_HAT_X,
-            MotionEvent.AXIS_HAT_Y
-        )
-        val values = floatArrayOf(
-            controller.state.thumbLX,
-            controller.state.thumbLY,
-            controller.state.thumbRX,
-            controller.state.thumbRY,
-            controller.state.dPadX.toFloat(),
-            controller.state.dPadY.toFloat()
+        val axisSettings = controller.axisSettings ?: ControllerAxisSettings()
+
+        // 1. Process Left Analog Stick (2D Radial Vector with leftStick settings)
+        val rawLX = controller.state.thumbLX
+        val rawLY = controller.state.thumbLY
+        val (procLX, procLY) = calculateRadialVector(
+            rawLX, rawLY,
+            axisSettings.leftStickDeadzone,
+            axisSettings.leftStickOuterDeadzone,
+            axisSettings.leftStickSensitivity,
+            axisSettings.leftStickCurve
         )
 
-        for (i in axes.indices) {
-            val posKeyCode = ExternalControllerBinding.getKeyCodeForAxis(axes[i], 1.toByte())
-            val negKeyCode = ExternalControllerBinding.getKeyCodeForAxis(axes[i], (-1).toByte())
+        dispatchAxis(controller, MotionEvent.AXIS_X, procLX)
+        dispatchAxis(controller, MotionEvent.AXIS_Y, procLY)
 
-            if (Math.abs(values[i]) > ControlElement.STICK_DEAD_ZONE) {
-                val activeKey = ExternalControllerBinding.getKeyCodeForAxis(axes[i], Mathf.sign(values[i]))
-                val oppositeKey = if (activeKey == posKeyCode) negKeyCode else posKeyCode
+        // 2. Process Right Analog Stick (2D Radial Vector with rightStick settings)
+        val rawRX = controller.state.thumbRX
+        val rawRY = controller.state.thumbRY
+        val (procRX, procRY) = calculateRadialVector(
+            rawRX, rawRY,
+            axisSettings.rightStickDeadzone,
+            axisSettings.rightStickOuterDeadzone,
+            axisSettings.rightStickSensitivity,
+            axisSettings.rightStickCurve
+        )
 
-                // always send press (gamepad bindings need continuous offset updates)
-                activeAxisBindings.add(activeKey)
-                controller.getControllerBinding(activeKey)?.let {
-                    handleInputEvent(it.binding, true, values[i])
+        dispatchAxis(controller, MotionEvent.AXIS_Z, procRX)
+        dispatchAxis(controller, MotionEvent.AXIS_RZ, procRY)
+
+        // 3. Process D-Pad Hat axes (Discrete digital axes)
+        dispatchHatAxis(controller, MotionEvent.AXIS_HAT_X, controller.state.dPadX.toFloat())
+        dispatchHatAxis(controller, MotionEvent.AXIS_HAT_Y, controller.state.dPadY.toFloat())
+
+        return floatArrayOf(procLX, procLY, procRX, procRY)
+    }
+
+    /**
+     * Calculates 2D radial deadzone, outer threshold, response curve, and sensitivity without cardinal axis snapping.
+     */
+    private fun calculateRadialVector(
+        rawX: Float,
+        rawY: Float,
+        innerDeadzone: Float,
+        outerDeadzone: Float,
+        sensitivity: Float,
+        curve: Float
+    ): Pair<Float, Float> {
+        val magnitude = Math.sqrt((rawX * rawX + rawY * rawY).toDouble()).toFloat()
+
+        if (magnitude <= innerDeadzone || magnitude == 0f) {
+            return Pair(0f, 0f)
+        }
+
+        val denom = (outerDeadzone - innerDeadzone).coerceAtLeast(0.01f)
+        val normalized = ((magnitude - innerDeadzone) / denom).coerceIn(0f, 1f)
+        val curved = Math.pow(normalized.toDouble(), curve.toDouble()).toFloat()
+        val scaledMagnitude = (curved * sensitivity).coerceIn(0f, 1f)
+        val factor = scaledMagnitude / magnitude
+
+        return Pair(
+            (rawX * factor).coerceIn(-1f, 1f),
+            (rawY * factor).coerceIn(-1f, 1f)
+        )
+    }
+
+    /**
+     * Dispatches processed analog axis values to bindings.
+     */
+    private fun dispatchAxis(controller: ExternalController, axis: Int, processedVal: Float) {
+        val posKeyCode = ExternalControllerBinding.getKeyCodeForAxis(axis, 1.toByte())
+        val negKeyCode = ExternalControllerBinding.getKeyCodeForAxis(axis, (-1).toByte())
+
+        if (processedVal != 0f) {
+            val activeKey = ExternalControllerBinding.getKeyCodeForAxis(axis, Mathf.sign(processedVal))
+            val oppositeKey = if (activeKey == posKeyCode) negKeyCode else posKeyCode
+
+            activeAxisBindings.add(activeKey)
+            controller.getControllerBinding(activeKey)?.let {
+                handleInputEvent(it.binding, true, processedVal)
+            }
+            if (activeAxisBindings.remove(oppositeKey)) {
+                controller.getControllerBinding(oppositeKey)?.let {
+                    handleInputEvent(it.binding, false, 0f)
                 }
-                // release opposite direction (if it was active)
-                if (activeAxisBindings.remove(oppositeKey)) {
-                    controller.getControllerBinding(oppositeKey)?.let {
-                        handleInputEvent(it.binding, false, 0f)
-                    }
+            }
+        } else {
+            if (activeAxisBindings.remove(posKeyCode)) {
+                controller.getControllerBinding(posKeyCode)?.let {
+                    handleInputEvent(it.binding, false, 0f)
                 }
+            }
+            if (activeAxisBindings.remove(negKeyCode)) {
+                controller.getControllerBinding(negKeyCode)?.let {
+                    handleInputEvent(it.binding, false, 0f)
+                }
+            }
+        }
+    }
+
+    /**
+     * Dispatches D-pad hat axis values (discrete threshold).
+     */
+    private fun dispatchHatAxis(controller: ExternalController, axis: Int, rawVal: Float) {
+        val posKeyCode = ExternalControllerBinding.getKeyCodeForAxis(axis, 1.toByte())
+        val negKeyCode = ExternalControllerBinding.getKeyCodeForAxis(axis, (-1).toByte())
+
+        if (Math.abs(rawVal) > 0.5f) {
+            val activeKey = ExternalControllerBinding.getKeyCodeForAxis(axis, Mathf.sign(rawVal))
+            val oppositeKey = if (activeKey == posKeyCode) negKeyCode else posKeyCode
+
+            activeAxisBindings.add(activeKey)
+            val binding = controller.getControllerBinding(activeKey)
+            if (binding != null) {
+                handleInputEvent(binding.binding, true, rawVal)
             } else {
-                // release both directions only if they were active
-                if (activeAxisBindings.remove(posKeyCode)) {
-                    controller.getControllerBinding(posKeyCode)?.let {
-                        handleInputEvent(it.binding, false, 0f)
+                val state = profile?.gamepadState
+                if (state != null) {
+                    if (axis == MotionEvent.AXIS_HAT_X) {
+                        if (rawVal > 0.5f) {
+                            state.dpad[1] = true // Right
+                            state.dpad[3] = false // Left
+                        } else if (rawVal < -0.5f) {
+                            state.dpad[3] = true // Left
+                            state.dpad[1] = false // Right
+                        }
+                    } else if (axis == MotionEvent.AXIS_HAT_Y) {
+                        if (rawVal > 0.5f) {
+                            state.dpad[2] = true // Down
+                            state.dpad[0] = false // Up
+                        } else if (rawVal < -0.5f) {
+                            state.dpad[0] = true // Up
+                            state.dpad[2] = false // Down
+                        }
                     }
                 }
-                if (activeAxisBindings.remove(negKeyCode)) {
-                    controller.getControllerBinding(negKeyCode)?.let {
-                        handleInputEvent(it.binding, false, 0f)
+            }
+            if (activeAxisBindings.remove(oppositeKey)) {
+                val oppBinding = controller.getControllerBinding(oppositeKey)
+                if (oppBinding != null) {
+                    handleInputEvent(oppBinding.binding, false, 0f)
+                }
+            }
+        } else {
+            if (activeAxisBindings.remove(posKeyCode)) {
+                val binding = controller.getControllerBinding(posKeyCode)
+                if (binding != null) {
+                    handleInputEvent(binding.binding, false, 0f)
+                } else {
+                    val state = profile?.gamepadState
+                    if (state != null) {
+                        if (axis == MotionEvent.AXIS_HAT_X) state.dpad[1] = false
+                        else if (axis == MotionEvent.AXIS_HAT_Y) state.dpad[2] = false
+                    }
+                }
+            }
+            if (activeAxisBindings.remove(negKeyCode)) {
+                val binding = controller.getControllerBinding(negKeyCode)
+                if (binding != null) {
+                    handleInputEvent(binding.binding, false, 0f)
+                } else {
+                    val state = profile?.gamepadState
+                    if (state != null) {
+                        if (axis == MotionEvent.AXIS_HAT_X) state.dpad[3] = false
+                        else if (axis == MotionEvent.AXIS_HAT_Y) state.dpad[0] = false
                     }
                 }
             }

@@ -157,8 +157,12 @@ public class InputControlsView extends View {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        if (profile != null && profile.isElementsLoaded() && oldw > 0 && w != oldw) {
+        if (w > 0) {
+            this.snappingSize = Math.max(1, w / 100);
+        }
+        if (profile != null && (oldw > 0 || oldh > 0) && (w != oldw || h != oldh)) {
             profile.loadElements(this);
+            invalidate();
         }
     }
 
@@ -172,7 +176,7 @@ public class InputControlsView extends View {
             return;
         }
 
-        snappingSize = width / 100;
+        snappingSize = Math.max(1, width / 100);
         readyToDraw = true;
 
         if (editMode) {

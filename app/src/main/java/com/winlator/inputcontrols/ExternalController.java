@@ -19,7 +19,6 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.util.ArrayList;
 
 public class ExternalController {
     public static final float STICK_DEAD_ZONE = 0.15f;
@@ -43,9 +42,21 @@ public class ExternalController {
     private String name;
     private int deviceId = -1;
     private byte triggerType = TRIGGER_IS_AXIS;
+    private ControllerAxisSettings axisSettings = new ControllerAxisSettings();
     private final ArrayList<ExternalControllerBinding> controllerBindings = new ArrayList<>();
     public final GamepadState state = new GamepadState();
     private boolean processTriggerButtonOnMotionEvent = true;
+
+    public ControllerAxisSettings getAxisSettings() {
+        if (this.axisSettings == null) {
+            this.axisSettings = new ControllerAxisSettings();
+        }
+        return this.axisSettings;
+    }
+
+    public void setAxisSettings(ControllerAxisSettings axisSettings) {
+        this.axisSettings = axisSettings != null ? axisSettings : new ControllerAxisSettings();
+    }
 
     public String getName() {
         return this.name;
@@ -150,7 +161,7 @@ public class ExternalController {
 
     public JSONObject toJSONObject() {
         try {
-            if (this.controllerBindings.isEmpty()) {
+            if (this.controllerBindings.isEmpty() && this.axisSettings == null) {
                 return null;
             }
             JSONObject controllerJSONObject = new JSONObject();
@@ -163,6 +174,9 @@ public class ExternalController {
                 controllerBindingsJSONArray.put(controllerBinding.toJSONObject());
             }
             controllerJSONObject.put("controllerBindings", controllerBindingsJSONArray);
+            if (this.axisSettings != null) {
+                controllerJSONObject.put("axisSettings", this.axisSettings.toJSONObject());
+            }
             return controllerJSONObject;
         } catch (JSONException e) {
             return null;

@@ -1,4 +1,4 @@
-﻿<resources>
+<resources>
     <string name="app_name">GameNative</string>
     <string name="login_user">User Login</string>
     <string name="login_2fa">Two Factor</string>
@@ -573,6 +573,45 @@
     <string name="button_home">Home / Guide / PS</string>
     <string name="reset_to_default_bindings">Reset to Default Bindings</string>
     <string name="not_set">Not Set</string>
+    <string name="analog_settings_category">Analog Settings</string>
+    <string name="analog_settings_title">Stick &amp; Trigger Tuning</string>
+    <string name="analog_presets">Response Presets</string>
+    <string name="preset_precise">Precise</string>
+    <string name="preset_linear">Linear</string>
+    <string name="preset_aggressive">Aggressive</string>
+    <string name="deadzone_label">Stick Deadzone</string>
+    <string name="deadzone_description">Ignores small center movements to prevent stick drift</string>
+    <string name="stick_outer_deadzone_label">Outer Deadzone (Max Threshold)</string>
+    <string name="stick_outer_deadzone_desc">Physical stick tilt required to reach 100% in-game movement or aiming speed</string>
+    <string name="sensitivity_label">Sensitivity</string>
+    <string name="sensitivity_description">Scales overall stick movement response speed</string>
+    <string name="response_curve_label">Response Curve</string>
+    <string name="response_curve_description">Higher values provide more control near center, ramping up at full tilt</string>
+    <string name="curve_preview_title">Response Preview</string>
+    <string name="curve_input_label">Input (Stick Tilt)</string>
+    <string name="curve_output_label">Output (In-Game Speed)</string>
+    <string name="trigger_hair_trigger_title">Feather / Hair Triggers</string>
+    <string name="trigger_hair_trigger_desc">Registers full 100% trigger press instantly on a light tap for rapid firing</string>
+    <string name="trigger_threshold_label">Hair Trigger Threshold</string>
+    <string name="trigger_threshold_desc">Trigger pull distance required to activate full press</string>
+    <string name="trigger_deadzone_label">Trigger Deadzone</string>
+    <string name="trigger_deadzone_desc">Resting trigger travel ignored before input begins</string>
+    <string name="trigger_cutoff_label">Max Cutoff (100% Threshold)</string>
+    <string name="trigger_cutoff_desc">Trigger squeeze distance required to reach 100% full throttle or fire</string>
+    <string name="stick_target_both">Both Sticks 🔗</string>
+    <string name="stick_target_left">Left Stick (Move)</string>
+    <string name="stick_target_right">Right Stick (Aim)</string>
+    <string name="trigger_target_both">Both Triggers 🔗</string>
+    <string name="trigger_target_left">L2 / LT</string>
+    <string name="trigger_target_right">R2 / RT</string>
+    <string name="preset_linear_default">Linear (Default)</string>
+    <string name="preset_default_desc">Linear is the factory default with 1:1 direct response.</string>
+    <string name="analog_help_title">Analog Controls Guide</string>
+    <string name="analog_help_deadzone">Stick Deadzone: Prevents stick drift by ignoring small sensor jitter around the center.</string>
+    <string name="analog_help_sensitivity">Sensitivity: Scales overall rotation and movement speed. Ranges from 0.2x up to 5.0x for rapid flick aiming.</string>
+    <string name="analog_help_curve">Response Curve: Controls how output ramps up. Precise (Curve &gt; 1.0) provides smooth micro-aiming near center while preserving top speed at full deflection.</string>
+    <string name="analog_help_hair_trigger">Feather / Hair Triggers: Converts L2 &amp; R2 into ultra-responsive triggers, eliminating the need to squeeze all the way down to shoot.</string>
+    <string name="analog_help_split">Split Controls: You can customize Left Stick (Movement) and Right Stick (Aiming) or L2 and R2 triggers independently.</string>
 
     <!-- Toast -->
     <string name="toast_controls_reset">Controls reset</string>

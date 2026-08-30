@@ -1479,7 +1479,9 @@ fun XServerScreen(
                     winHandler.setCurrentController(it.event.device.id)
                     handled = physicalControllerHandler?.onKeyEvent(it.event) == true
                     if (!handled) handled = PluviaApp.inputControlsView?.onKeyEvent(it.event) == true
-                    // Final fallback to WinHandler passthrough
+                    // WinHandler fallback for unmapped buttons / default passthrough.
+                    // Safe because onGenericMotionEvent now keeps controller.state in sync
+                    // with processed stick/trigger values, so sendMemoryFileState won't clobber.
                     if (!handled) handled = winHandler.onKeyEvent(it.event)
                 }
             }
@@ -1532,7 +1534,6 @@ fun XServerScreen(
                     winHandler.setCurrentController(it.event.device.id)
                     handled = physicalControllerHandler?.onGenericMotionEvent(it.event!!) == true
                     if (!handled) handled = PluviaApp.inputControlsView?.onGenericMotionEvent(it.event) == true
-                    // Final fallback to WinHandler passthrough
                     if (!handled) handled = winHandler.onGenericMotionEvent(it.event)
                 }
             }
@@ -1540,9 +1541,11 @@ fun XServerScreen(
                 if ((it.event != null) && (it.event.device != null)) {
                     val device = it.event.device
                     val isExternal = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) device.isExternal else true
+                    val isTouchscreen = device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN)
+                    // Samsung DeX Touchpad app: must be internal touchpad AND NOT a touchscreen
+                    // (Samsung Galaxy Z Fold inner/outer screens report SOURCE_TOUCHPAD + SOURCE_TOUCHSCREEN)
                     if (device.supportsSource(InputDevice.SOURCE_TOUCHPAD) &&
-                        !isExternal) {
-                        // Samsung DeX Touchpad app
+                        !isExternal && !isTouchscreen) {
                         hasInternalTouchpad = true
                         if (!showElementEditor && !keepPausedForEditor && !showQuickMenu && !isEditMode &&
                             !hasUpdatedScreenGamepad) {
@@ -2810,50 +2813,37 @@ fun XServerScreen(
         }
 
         if (profile != null) {
-            androidx.compose.ui.window.Dialog(
-                onDismissRequest = {
+            app.gamenative.ui.component.dialog.PhysicalControllerConfigSection(
+                profile = profile,
+                onDismiss = {
+                    physicalControllerHandler?.setProfile(profile)
+                    showPhysicalControllerDialog = false
+                    keepPausedForEditor = false
+                    resumeIfAllowedAfterOverlay()
+                },
+                onSave = {
+                    // Ensure controllersLoaded is true before saving
+                    // (addController sets the flag even if controller already exists)
+                    profile.addController("*")
+
+                    // Save profileId to container so it persists across launches
+                    container.putExtra("profileId", profile.id.toString())
+                    container.saveData()
+
+                    // Save profile (will now write controllers since controllersLoaded = true)
+                    profile.save()
+                    profile.loadControllers()
+
+                    // Update handler with reloaded profile if on-screen controls are shown
+                    if (PluviaApp.inputControlsView?.profile != null) {
+                        PluviaApp.inputControlsView?.setProfile(profile)
+                    }
+                    physicalControllerHandler?.setProfile(profile)
                     showPhysicalControllerDialog = false
                     keepPausedForEditor = false
                     resumeIfAllowedAfterOverlay()
                 }
-            ) {
-                androidx.compose.foundation.layout.Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.95f))
-                ) {
-                    app.gamenative.ui.component.dialog.PhysicalControllerConfigSection(
-                        profile = profile,
-                        onDismiss = {
-                            showPhysicalControllerDialog = false
-                            keepPausedForEditor = false
-                            resumeIfAllowedAfterOverlay()
-                        },
-                        onSave = {
-                            // Ensure controllersLoaded is true before saving
-                            // (addController sets the flag even if controller already exists)
-                            profile.addController("*")
-
-                            // Save profileId to container so it persists across launches
-                            container.putExtra("profileId", profile.id.toString())
-                            container.saveData()
-
-                            // Save profile (will now write controllers since controllersLoaded = true)
-                            profile.save()
-                            profile.loadControllers()
-
-                            // Update handler with reloaded profile if on-screen controls are shown
-                            if (PluviaApp.inputControlsView?.profile != null) {
-                                PluviaApp.inputControlsView?.setProfile(profile)
-                            }
-                            physicalControllerHandler?.setProfile(profile)
-                            showPhysicalControllerDialog = false
-                            keepPausedForEditor = false
-                            resumeIfAllowedAfterOverlay()
-                        }
-                    )
-                }
-            }
+            )
         }
     }
 
