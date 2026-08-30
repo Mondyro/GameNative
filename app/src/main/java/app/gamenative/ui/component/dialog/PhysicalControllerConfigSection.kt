@@ -152,7 +152,72 @@ internal fun PhysicalControllerConfigSection(
     var selectedCategory by remember { mutableStateOf(0) } // 0 = Face, 1 = Shoulder, 2 = Menu, 3 = Thumbstick, 4 = Left Stick, 5 = Right Stick, 6 = D-Pad, 7 = Analog Settings
     var showBindingDialog by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var showAnalogHelpDialog by remember { mutableStateOf(false) }
+    var showUnsavedChangesDialog by remember { mutableStateOf(false) }
     var refreshKey by remember { mutableIntStateOf(0) }
+
+    fun hasUnsavedChanges(): Boolean {
+        val currentBindingsMap = workingBindings.filterValues { it != null && it != com.winlator.inputcontrols.Binding.NONE }
+        val origBindingsMap = originalBindings.filterValues { it != com.winlator.inputcontrols.Binding.NONE }
+        val bindingsChanged = currentBindingsMap != origBindingsMap
+        val axisChanged = workingAxisSettings != originalAxisSettings
+        return bindingsChanged || axisChanged
+    }
+
+    fun performSave() {
+        Log.d("gncontrol", "=== Save: Applying ${workingBindings.size} bindings and axis settings ===")
+        controller?.let { ctrl ->
+            val existingBindings = ctrl.getControllerBindings().toList()
+            for (binding in existingBindings) {
+                ctrl.removeControllerBinding(binding)
+            }
+
+            for ((keyCode, binding) in workingBindings) {
+                if (binding != null && binding != com.winlator.inputcontrols.Binding.NONE) {
+                    val newBinding = ExternalControllerBinding()
+                    newBinding.setKeyCode(keyCode)
+                    newBinding.setBinding(binding)
+                    ctrl.addControllerBinding(newBinding)
+                }
+            }
+
+            ctrl.axisSettings = workingAxisSettings.copy()
+
+            val manager = com.winlator.inputcontrols.InputControlsManager(context)
+            val defaultProfile = manager.getProfile(0)
+            if (defaultProfile != null) {
+                copyElementsIfNeeded(context, profile, defaultProfile)
+            }
+
+            profile.save()
+            Log.d("gncontrol", "Saved profile ${profile.name}")
+        }
+        onSave()
+    }
+
+    fun performDiscard() {
+        controller?.let { ctrl ->
+            val existingBindings = ctrl.getControllerBindings().toList()
+            for (binding in existingBindings) {
+                ctrl.removeControllerBinding(binding)
+            }
+            for ((keyCode, binding) in originalBindings) {
+                val newBinding = ExternalControllerBinding()
+                newBinding.setKeyCode(keyCode)
+                newBinding.setBinding(binding)
+                ctrl.addControllerBinding(newBinding)
+            }
+            ctrl.axisSettings = originalAxisSettings.copy()
+        }
+        onDismiss()
+    }
+
+    fun handleBackPress() {
+        if (hasUnsavedChanges()) {
+            showUnsavedChangesDialog = true
+        } else {
+            performDiscard()
+        }
+    }
 
     // Pre-compute all button configurations
     // Face buttons
@@ -224,21 +289,7 @@ internal fun PhysicalControllerConfigSection(
 
     Dialog(
         onDismissRequest = {
-            // Cancel: Restore original bindings and axis settings
-            controller?.let { ctrl ->
-                val existingBindings = ctrl.getControllerBindings().toList()
-                for (binding in existingBindings) {
-                    ctrl.removeControllerBinding(binding)
-                }
-                for ((keyCode, binding) in originalBindings) {
-                    val newBinding = ExternalControllerBinding()
-                    newBinding.setKeyCode(keyCode)
-                    newBinding.setBinding(binding)
-                    ctrl.addControllerBinding(newBinding)
-                }
-                ctrl.axisSettings = originalAxisSettings.copy()
-            }
-            onDismiss()
+            handleBackPress()
         },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
@@ -321,6 +372,13 @@ internal fun PhysicalControllerConfigSection(
                     isTestModeActive = !isTestModeActive
                     return@OnKeyListener true
                 }
+                // B / Back button prompts to save if changes were made
+                if ((keyCode == KeyEvent.KEYCODE_BUTTON_B || keyCode == KeyEvent.KEYCODE_BACK) && event.action == KeyEvent.ACTION_UP) {
+                    if (showBindingDialog == null && !showAnalogHelpDialog && !showUnsavedChangesDialog && !isTestModeActive) {
+                        handleBackPress()
+                        return@OnKeyListener true
+                    }
+                }
                 false
             }
 
@@ -352,22 +410,7 @@ internal fun PhysicalControllerConfigSection(
                     },
                     navigationIcon = {
                         IconButton(onClick = {
-                            // Cancel: Restore original bindings and axis settings
-                            controller?.let { ctrl ->
-                                val existingBindings = ctrl.getControllerBindings().toList()
-                                for (binding in existingBindings) {
-                                    ctrl.removeControllerBinding(binding)
-                                }
-                                for ((keyCode, binding) in originalBindings) {
-                                    val newBinding = ExternalControllerBinding()
-                                    newBinding.setKeyCode(keyCode)
-                                    newBinding.setBinding(binding)
-                                    ctrl.addControllerBinding(newBinding)
-                                }
-                                ctrl.axisSettings = originalAxisSettings.copy()
-                            }
-                            isTestModeActive = false
-                            onDismiss()
+                            handleBackPress()
                         }) {
                             Icon(Icons.Default.Close, null)
                         }
@@ -410,35 +453,7 @@ internal fun PhysicalControllerConfigSection(
 
                         // Save button
                         IconButton(onClick = {
-                            Log.d("gncontrol", "=== Save: Applying ${workingBindings.size} bindings and axis settings ===")
-                            controller?.let { ctrl ->
-                                val existingBindings = ctrl.getControllerBindings().toList()
-                                for (binding in existingBindings) {
-                                    ctrl.removeControllerBinding(binding)
-                                }
-
-                                for ((keyCode, binding) in workingBindings) {
-                                    if (binding != null) {
-                                        val newBinding = ExternalControllerBinding()
-                                        newBinding.setKeyCode(keyCode)
-                                        newBinding.setBinding(binding)
-                                        ctrl.addControllerBinding(newBinding)
-                                    }
-                                }
-
-                                ctrl.axisSettings = workingAxisSettings.copy()
-
-                                val manager = com.winlator.inputcontrols.InputControlsManager(context)
-                                val defaultProfile = manager.getProfile(0)
-                                if (defaultProfile != null) {
-                                    copyElementsIfNeeded(context, profile, defaultProfile)
-                                }
-
-                                profile.save()
-                                Log.d("gncontrol", "Saved profile ${profile.name}")
-                            }
-                            isTestModeActive = false
-                            onSave()
+                            performSave()
                         }) {
                             Icon(Icons.Default.Save, null)
                         }
@@ -771,6 +786,56 @@ internal fun PhysicalControllerConfigSection(
             confirmButton = {
                 TextButton(onClick = { showAnalogHelpDialog = false }) {
                     Text("Got it")
+                }
+            }
+        )
+    }
+
+    // Unsaved Changes Confirmation Dialog
+    if (showUnsavedChangesDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnsavedChangesDialog = false },
+            title = {
+                Text(
+                    text = "Save Controller Changes?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "You have unsaved controller mappings or analog settings. Would you like to save your changes before returning to the game?",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUnsavedChangesDialog = false
+                        performSave()
+                    }
+                ) {
+                    Text("Save & Exit", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = { showUnsavedChangesDialog = false }
+                    ) {
+                        Text("Cancel")
+                    }
+                    TextButton(
+                        onClick = {
+                            showUnsavedChangesDialog = false
+                            performDiscard()
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("Discard")
+                    }
                 }
             }
         )
