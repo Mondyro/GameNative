@@ -350,29 +350,31 @@ class PhysicalControllerHandler(
 
         val axisSettings = controller.axisSettings ?: ControllerAxisSettings()
 
-        // 1. Process Left Analog Stick (2D Radial Vector with leftStick settings)
+        // 1. Process Left Analog Stick (2D Radial Vector with Piecewise Midpoint Spline + Anti-Deadzone Floor)
         val rawLX = controller.state.thumbLX
         val rawLY = controller.state.thumbLY
         val (procLX, procLY) = calculateRadialVector(
             rawLX, rawLY,
             axisSettings.leftStickDeadzone,
+            axisSettings.leftStickAntiDeadzone,
+            axisSettings.leftStickMidpoint,
             axisSettings.leftStickOuterDeadzone,
-            axisSettings.leftStickSensitivity,
-            axisSettings.leftStickCurve
+            axisSettings.leftStickSensitivity
         )
 
         dispatchAxis(controller, MotionEvent.AXIS_X, procLX)
         dispatchAxis(controller, MotionEvent.AXIS_Y, procLY)
 
-        // 2. Process Right Analog Stick (2D Radial Vector with rightStick settings)
+        // 2. Process Right Analog Stick (2D Radial Vector with Piecewise Midpoint Spline + Anti-Deadzone Floor)
         val rawRX = controller.state.thumbRX
         val rawRY = controller.state.thumbRY
         val (procRX, procRY) = calculateRadialVector(
             rawRX, rawRY,
             axisSettings.rightStickDeadzone,
+            axisSettings.rightStickAntiDeadzone,
+            axisSettings.rightStickMidpoint,
             axisSettings.rightStickOuterDeadzone,
-            axisSettings.rightStickSensitivity,
-            axisSettings.rightStickCurve
+            axisSettings.rightStickSensitivity
         )
 
         dispatchAxis(controller, MotionEvent.AXIS_Z, procRX)
@@ -386,15 +388,16 @@ class PhysicalControllerHandler(
     }
 
     /**
-     * Calculates 2D radial deadzone, outer threshold, response curve, and sensitivity without cardinal axis snapping.
+     * Calculates 2D radial deadzone, outer threshold, midpoint spline, anti-deadzone floor, and sensitivity without cardinal axis snapping.
      */
     private fun calculateRadialVector(
         rawX: Float,
         rawY: Float,
         innerDeadzone: Float,
+        antiDeadzone: Float,
+        midpoint: Float,
         outerDeadzone: Float,
-        sensitivity: Float,
-        curve: Float
+        sensitivity: Float
     ): Pair<Float, Float> {
         val magnitude = Math.sqrt((rawX * rawX + rawY * rawY).toDouble()).toFloat()
 
@@ -404,8 +407,12 @@ class PhysicalControllerHandler(
 
         val denom = (outerDeadzone - innerDeadzone).coerceAtLeast(0.01f)
         val normalized = ((magnitude - innerDeadzone) / denom).coerceIn(0f, 1f)
-        val curved = Math.pow(normalized.toDouble(), curve.toDouble()).toFloat()
-        val scaledMagnitude = (curved * sensitivity).coerceIn(0f, 1f)
+        val scaledMagnitude = ControllerAxisSettings.evaluateStickCurve(
+            normalized,
+            antiDeadzone,
+            midpoint,
+            sensitivity
+        )
         val factor = scaledMagnitude / magnitude
 
         return Pair(

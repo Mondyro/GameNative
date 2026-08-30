@@ -6,19 +6,24 @@ import org.json.JSONObject
 /**
  * Settings for physical controller analog stick and trigger response.
  * Supports independent Left Stick, Right Stick, and L2 / R2 trigger tuning.
+ * Uses a Piecewise Midpoint Spline + Anti-Deadzone Floor for stick curves.
  */
 data class ControllerAxisSettings(
     // Left Analog Stick
     var leftStickDeadzone: Float = DEFAULT_DEADZONE,
+    var leftStickAntiDeadzone: Float = DEFAULT_ANTI_DEADZONE,
+    var leftStickMidpoint: Float = DEFAULT_MIDPOINT,
     var leftStickOuterDeadzone: Float = DEFAULT_STICK_OUTER_DEADZONE,
     var leftStickSensitivity: Float = DEFAULT_SENSITIVITY,
-    var leftStickCurve: Float = DEFAULT_CURVE,
+    var leftStickCurve: Float = DEFAULT_CURVE, // Kept for backwards compatibility
 
     // Right Analog Stick
     var rightStickDeadzone: Float = DEFAULT_DEADZONE,
+    var rightStickAntiDeadzone: Float = DEFAULT_ANTI_DEADZONE,
+    var rightStickMidpoint: Float = DEFAULT_MIDPOINT,
     var rightStickOuterDeadzone: Float = DEFAULT_STICK_OUTER_DEADZONE,
     var rightStickSensitivity: Float = DEFAULT_SENSITIVITY,
-    var rightStickCurve: Float = DEFAULT_CURVE,
+    var rightStickCurve: Float = DEFAULT_CURVE, // Kept for backwards compatibility
 
     // Left Trigger (L2 / LT)
     var leftTriggerHairTrigger: Boolean = false,
@@ -41,7 +46,9 @@ data class ControllerAxisSettings(
     var linkTriggers: Boolean = true,
 ) {
     companion object {
-        const val DEFAULT_DEADZONE = 0.15f
+        const val DEFAULT_DEADZONE = 0.05f
+        const val DEFAULT_ANTI_DEADZONE = 0.00f
+        const val DEFAULT_MIDPOINT = 0.50f
         const val DEFAULT_STICK_OUTER_DEADZONE = 1.0f
         const val DEFAULT_SENSITIVITY = 1.0f
         const val DEFAULT_CURVE = 1.0f
@@ -51,17 +58,51 @@ data class ControllerAxisSettings(
         const val DEFAULT_TRIGGER_SENSITIVITY = 1.0f
         const val DEFAULT_TRIGGER_CURVE = 1.0f
 
-        const val PRECISE_DEADZONE = 0.12f
-        const val PRECISE_SENSITIVITY = 0.85f
-        const val PRECISE_CURVE = 1.6f
+        const val PRECISE_DEADZONE = 0.03f
+        const val PRECISE_ANTI_DEADZONE = 0.10f
+        const val PRECISE_MIDPOINT = 0.35f
+        const val PRECISE_SENSITIVITY = 1.00f
+        const val PRECISE_CURVE = 1.25f
 
-        const val LINEAR_DEADZONE = 0.15f
+        const val LINEAR_DEADZONE = 0.05f
+        const val LINEAR_ANTI_DEADZONE = 0.00f
+        const val LINEAR_MIDPOINT = 0.50f
         const val LINEAR_SENSITIVITY = 1.0f
         const val LINEAR_CURVE = 1.0f
 
-        const val AGGRESSIVE_DEADZONE = 0.08f
-        const val AGGRESSIVE_SENSITIVITY = 1.50f
-        const val AGGRESSIVE_CURVE = 0.6f
+        const val AGGRESSIVE_DEADZONE = 0.02f
+        const val AGGRESSIVE_ANTI_DEADZONE = 0.15f
+        const val AGGRESSIVE_MIDPOINT = 0.65f
+        const val AGGRESSIVE_SENSITIVITY = 1.00f
+        const val AGGRESSIVE_CURVE = 0.85f
+
+        /**
+         * Evaluates output value for a normalized physical deflection using a Piecewise Midpoint Spline + Anti-Deadzone Floor.
+         */
+        @JvmStatic
+        fun evaluateStickCurve(
+            normalizedInput: Float,
+            antiDeadzone: Float,
+            midpoint: Float,
+            sensitivity: Float
+        ): Float {
+            if (normalizedInput <= 0f) return 0f
+            val t = normalizedInput.coerceIn(0f, 1f)
+            val m = midpoint.coerceIn(0.10f, 0.90f)
+            val s = Math.min(1.0f, 2.0f * Math.min(m, 1.0f - m))
+            val curved = if (t <= 0.5f) {
+                val a = 2f * s - 4f * m
+                val b = 4f * m - s
+                (a * t * t + b * t).coerceIn(0f, 1f)
+            } else {
+                val dt = t - 0.5f
+                val c = 4f * (1f - m) - 2f * s
+                (m + s * dt + c * dt * dt).coerceIn(0f, 1f)
+            }
+            val antiDz = antiDeadzone.coerceIn(0f, 0.5f)
+            val withAntiDz = antiDz + (1f - antiDz) * curved
+            return (withAntiDz * sensitivity).coerceIn(0f, 1f)
+        }
 
         @JvmStatic
         fun fromJSONObject(json: JSONObject?): ControllerAxisSettings {
@@ -75,16 +116,26 @@ data class ControllerAxisSettings(
             val legacyThreshold = json.optDouble("triggerThreshold", DEFAULT_TRIGGER_THRESHOLD.toDouble()).toFloat()
             val legacyTrigDeadzone = json.optDouble("triggerDeadzone", DEFAULT_TRIGGER_DEADZONE.toDouble()).toFloat()
 
+            // For midpoint: if not saved but legacy curve is present, estimate midpoint
+            val leftSavedCurve = json.optDouble("leftStickCurve", legacyCurve.toDouble()).toFloat()
+            val rightSavedCurve = json.optDouble("rightStickCurve", legacyCurve.toDouble()).toFloat()
+            val leftDefaultMid = if (Math.abs(leftSavedCurve - 1.0f) > 0.05f) Math.pow(0.5, leftSavedCurve.toDouble()).toFloat() else DEFAULT_MIDPOINT
+            val rightDefaultMid = if (Math.abs(rightSavedCurve - 1.0f) > 0.05f) Math.pow(0.5, rightSavedCurve.toDouble()).toFloat() else DEFAULT_MIDPOINT
+
             return ControllerAxisSettings(
                 leftStickDeadzone = json.optDouble("leftStickDeadzone", legacyDeadzone.toDouble()).toFloat(),
+                leftStickAntiDeadzone = json.optDouble("leftStickAntiDeadzone", DEFAULT_ANTI_DEADZONE.toDouble()).toFloat(),
+                leftStickMidpoint = json.optDouble("leftStickMidpoint", leftDefaultMid.toDouble()).toFloat(),
                 leftStickOuterDeadzone = json.optDouble("leftStickOuterDeadzone", DEFAULT_STICK_OUTER_DEADZONE.toDouble()).toFloat(),
                 leftStickSensitivity = json.optDouble("leftStickSensitivity", legacySensitivity.toDouble()).toFloat(),
-                leftStickCurve = json.optDouble("leftStickCurve", legacyCurve.toDouble()).toFloat(),
+                leftStickCurve = leftSavedCurve,
 
                 rightStickDeadzone = json.optDouble("rightStickDeadzone", legacyDeadzone.toDouble()).toFloat(),
+                rightStickAntiDeadzone = json.optDouble("rightStickAntiDeadzone", DEFAULT_ANTI_DEADZONE.toDouble()).toFloat(),
+                rightStickMidpoint = json.optDouble("rightStickMidpoint", rightDefaultMid.toDouble()).toFloat(),
                 rightStickOuterDeadzone = json.optDouble("rightStickOuterDeadzone", DEFAULT_STICK_OUTER_DEADZONE.toDouble()).toFloat(),
                 rightStickSensitivity = json.optDouble("rightStickSensitivity", legacySensitivity.toDouble()).toFloat(),
-                rightStickCurve = json.optDouble("rightStickCurve", legacyCurve.toDouble()).toFloat(),
+                rightStickCurve = rightSavedCurve,
 
                 leftTriggerHairTrigger = json.optBoolean("leftTriggerHairTrigger", legacyHair),
                 leftTriggerThreshold = json.optDouble("leftTriggerThreshold", legacyThreshold.toDouble()).toFloat(),
@@ -110,11 +161,15 @@ data class ControllerAxisSettings(
         val json = JSONObject()
         try {
             json.put("leftStickDeadzone", leftStickDeadzone.toDouble())
+            json.put("leftStickAntiDeadzone", leftStickAntiDeadzone.toDouble())
+            json.put("leftStickMidpoint", leftStickMidpoint.toDouble())
             json.put("leftStickOuterDeadzone", leftStickOuterDeadzone.toDouble())
             json.put("leftStickSensitivity", leftStickSensitivity.toDouble())
             json.put("leftStickCurve", leftStickCurve.toDouble())
 
             json.put("rightStickDeadzone", rightStickDeadzone.toDouble())
+            json.put("rightStickAntiDeadzone", rightStickAntiDeadzone.toDouble())
+            json.put("rightStickMidpoint", rightStickMidpoint.toDouble())
             json.put("rightStickOuterDeadzone", rightStickOuterDeadzone.toDouble())
             json.put("rightStickSensitivity", rightStickSensitivity.toDouble())
             json.put("rightStickCurve", rightStickCurve.toDouble())
@@ -184,18 +239,18 @@ data class ControllerAxisSettings(
         SMOOTH_CAM,
     }
 
-    // Trigger specific presets
+    // Trigger presets
     enum class TriggerPreset {
-        INSTANT_HAIR_FPS,
+        HAIR_TRIGGER,
         SMOOTH_RACING,
         LINEAR_DEFAULT,
         AGGRESSIVE_THROTTLE,
     }
 
     fun applyTriggerPreset(preset: TriggerPreset, target: TargetTrigger = TargetTrigger.BOTH) {
-        val applyTo = { isLeft: Boolean ->
+        fun applyTo(isLeft: Boolean) {
             when (preset) {
-                TriggerPreset.INSTANT_HAIR_FPS -> {
+                TriggerPreset.HAIR_TRIGGER -> {
                     if (isLeft) {
                         leftTriggerHairTrigger = true
                         leftTriggerThreshold = 0.08f
@@ -264,9 +319,13 @@ data class ControllerAxisSettings(
         when (preset) {
             GenrePreset.LINEAR_DEFAULT -> {
                 leftStickDeadzone = LINEAR_DEADZONE
+                leftStickAntiDeadzone = LINEAR_ANTI_DEADZONE
+                leftStickMidpoint = LINEAR_MIDPOINT
                 leftStickSensitivity = LINEAR_SENSITIVITY
                 leftStickCurve = LINEAR_CURVE
                 rightStickDeadzone = LINEAR_DEADZONE
+                rightStickAntiDeadzone = LINEAR_ANTI_DEADZONE
+                rightStickMidpoint = LINEAR_MIDPOINT
                 rightStickSensitivity = LINEAR_SENSITIVITY
                 rightStickCurve = LINEAR_CURVE
                 leftTriggerHairTrigger = false
@@ -281,54 +340,70 @@ data class ControllerAxisSettings(
                 rightTriggerCurve = 1.0f
             }
             GenrePreset.FPS_SHOOTER -> {
-                leftStickDeadzone = 0.10f
+                leftStickDeadzone = 0.04f
+                leftStickAntiDeadzone = 0.08f
+                leftStickMidpoint = 0.45f
                 leftStickSensitivity = 1.00f
                 leftStickCurve = 1.00f
-                rightStickDeadzone = 0.08f
-                rightStickSensitivity = 1.30f
-                rightStickCurve = 1.60f
+                rightStickDeadzone = 0.03f
+                rightStickAntiDeadzone = 0.10f
+                rightStickMidpoint = 0.35f
+                rightStickSensitivity = 1.00f
+                rightStickCurve = 1.25f
                 leftTriggerHairTrigger = true
-                leftTriggerThreshold = 0.08f
+                leftTriggerThreshold = 0.05f
                 rightTriggerHairTrigger = true
-                rightTriggerThreshold = 0.08f
+                rightTriggerThreshold = 0.05f
             }
             GenrePreset.RACING_DRIVING -> {
-                leftStickDeadzone = 0.06f
+                leftStickDeadzone = 0.05f
+                leftStickAntiDeadzone = 0.05f
+                leftStickMidpoint = 0.45f
                 leftStickSensitivity = 1.00f
-                leftStickCurve = 1.40f
-                rightStickDeadzone = 0.12f
+                leftStickCurve = 1.15f
+                rightStickDeadzone = 0.05f
+                rightStickAntiDeadzone = 0.05f
+                rightStickMidpoint = 0.50f
                 rightStickSensitivity = 1.00f
                 rightStickCurve = 1.00f
                 leftTriggerHairTrigger = false
                 leftTriggerDeadzone = 0.02f
                 leftTriggerCutoff = 1.0f
                 leftTriggerSensitivity = 1.0f
-                leftTriggerCurve = 1.40f
+                leftTriggerCurve = 1.30f
                 rightTriggerHairTrigger = false
                 rightTriggerDeadzone = 0.02f
                 rightTriggerCutoff = 1.0f
                 rightTriggerSensitivity = 1.0f
-                rightTriggerCurve = 1.40f
+                rightTriggerCurve = 1.30f
             }
             GenrePreset.FAST_ACTION -> {
-                leftStickDeadzone = 0.06f
-                leftStickSensitivity = 1.50f
-                leftStickCurve = 0.60f
-                rightStickDeadzone = 0.06f
-                rightStickSensitivity = 1.50f
-                rightStickCurve = 0.60f
+                leftStickDeadzone = 0.02f
+                leftStickAntiDeadzone = 0.12f
+                leftStickMidpoint = 0.60f
+                leftStickSensitivity = 1.00f
+                leftStickCurve = 0.85f
+                rightStickDeadzone = 0.02f
+                rightStickAntiDeadzone = 0.12f
+                rightStickMidpoint = 0.60f
+                rightStickSensitivity = 1.00f
+                rightStickCurve = 0.85f
                 leftTriggerHairTrigger = true
-                leftTriggerThreshold = 0.10f
+                leftTriggerThreshold = 0.05f
                 rightTriggerHairTrigger = true
-                rightTriggerThreshold = 0.10f
+                rightTriggerThreshold = 0.05f
             }
             GenrePreset.FLIGHT_SPACE -> {
-                leftStickDeadzone = 0.08f
+                leftStickDeadzone = 0.04f
+                leftStickAntiDeadzone = 0.05f
+                leftStickMidpoint = 0.35f
                 leftStickSensitivity = 1.00f
-                leftStickCurve = 1.80f
-                rightStickDeadzone = 0.08f
+                leftStickCurve = 1.40f
+                rightStickDeadzone = 0.04f
+                rightStickAntiDeadzone = 0.05f
+                rightStickMidpoint = 0.35f
                 rightStickSensitivity = 1.00f
-                rightStickCurve = 1.80f
+                rightStickCurve = 1.40f
                 leftTriggerHairTrigger = false
                 leftTriggerDeadzone = 0.02f
                 leftTriggerCutoff = 1.0f
@@ -347,23 +422,31 @@ data class ControllerAxisSettings(
         when (preset) {
             LeftStickPreset.LINEAR_DEFAULT -> {
                 leftStickDeadzone = LINEAR_DEADZONE
+                leftStickAntiDeadzone = LINEAR_ANTI_DEADZONE
+                leftStickMidpoint = LINEAR_MIDPOINT
                 leftStickSensitivity = LINEAR_SENSITIVITY
                 leftStickCurve = LINEAR_CURVE
             }
             LeftStickPreset.SMOOTH_STEER -> {
-                leftStickDeadzone = 0.06f
+                leftStickDeadzone = 0.05f
+                leftStickAntiDeadzone = 0.05f
+                leftStickMidpoint = 0.45f
                 leftStickSensitivity = 1.00f
-                leftStickCurve = 1.40f
+                leftStickCurve = 1.15f
             }
             LeftStickPreset.FAST_RUN -> {
-                leftStickDeadzone = 0.06f
-                leftStickSensitivity = 1.50f
-                leftStickCurve = 0.60f
+                leftStickDeadzone = 0.02f
+                leftStickAntiDeadzone = 0.12f
+                leftStickMidpoint = 0.60f
+                leftStickSensitivity = 1.00f
+                leftStickCurve = 0.85f
             }
             LeftStickPreset.STEALTH_WALK -> {
-                leftStickDeadzone = 0.08f
-                leftStickSensitivity = 0.85f
-                leftStickCurve = 1.60f
+                leftStickDeadzone = 0.06f
+                leftStickAntiDeadzone = 0.08f
+                leftStickMidpoint = 0.35f
+                leftStickSensitivity = 1.00f
+                leftStickCurve = 1.35f
             }
         }
     }
@@ -372,43 +455,57 @@ data class ControllerAxisSettings(
         when (preset) {
             RightStickPreset.LINEAR_DEFAULT -> {
                 rightStickDeadzone = LINEAR_DEADZONE
+                rightStickAntiDeadzone = LINEAR_ANTI_DEADZONE
+                rightStickMidpoint = LINEAR_MIDPOINT
                 rightStickSensitivity = LINEAR_SENSITIVITY
                 rightStickCurve = LINEAR_CURVE
             }
             RightStickPreset.PRECISION_AIM -> {
-                rightStickDeadzone = 0.08f
-                rightStickSensitivity = 1.30f
-                rightStickCurve = 1.60f
+                rightStickDeadzone = 0.03f
+                rightStickAntiDeadzone = 0.10f
+                rightStickMidpoint = 0.35f
+                rightStickSensitivity = 1.00f
+                rightStickCurve = 1.25f
             }
             RightStickPreset.FAST_FLICK -> {
-                rightStickDeadzone = 0.06f
-                rightStickSensitivity = 1.50f
-                rightStickCurve = 0.60f
+                rightStickDeadzone = 0.02f
+                rightStickAntiDeadzone = 0.12f
+                rightStickMidpoint = 0.65f
+                rightStickSensitivity = 1.00f
+                rightStickCurve = 0.85f
             }
             RightStickPreset.SMOOTH_CAM -> {
-                rightStickDeadzone = 0.08f
+                rightStickDeadzone = 0.04f
+                rightStickAntiDeadzone = 0.08f
+                rightStickMidpoint = 0.40f
                 rightStickSensitivity = 1.00f
-                rightStickCurve = 1.80f
+                rightStickCurve = 1.15f
             }
         }
     }
 
     fun applyPreset(preset: Preset, target: TargetStick = TargetStick.BOTH) {
-        val (dz, sens, crv) = when (preset) {
-            Preset.PRECISE -> Triple(PRECISE_DEADZONE, PRECISE_SENSITIVITY, PRECISE_CURVE)
-            Preset.LINEAR -> Triple(LINEAR_DEADZONE, LINEAR_SENSITIVITY, LINEAR_CURVE)
-            Preset.AGGRESSIVE -> Triple(AGGRESSIVE_DEADZONE, AGGRESSIVE_SENSITIVITY, AGGRESSIVE_CURVE)
+        val (dz, antiDz, mid, sens, crv) = when (preset) {
+            Preset.PRECISE -> Tuple5(PRECISE_DEADZONE, PRECISE_ANTI_DEADZONE, PRECISE_MIDPOINT, PRECISE_SENSITIVITY, PRECISE_CURVE)
+            Preset.LINEAR -> Tuple5(LINEAR_DEADZONE, LINEAR_ANTI_DEADZONE, LINEAR_MIDPOINT, LINEAR_SENSITIVITY, LINEAR_CURVE)
+            Preset.AGGRESSIVE -> Tuple5(AGGRESSIVE_DEADZONE, AGGRESSIVE_ANTI_DEADZONE, AGGRESSIVE_MIDPOINT, AGGRESSIVE_SENSITIVITY, AGGRESSIVE_CURVE)
         }
 
         if (target == TargetStick.BOTH || target == TargetStick.LEFT) {
             leftStickDeadzone = dz
+            leftStickAntiDeadzone = antiDz
+            leftStickMidpoint = mid
             leftStickSensitivity = sens
             leftStickCurve = crv
         }
         if (target == TargetStick.BOTH || target == TargetStick.RIGHT) {
             rightStickDeadzone = dz
+            rightStickAntiDeadzone = antiDz
+            rightStickMidpoint = mid
             rightStickSensitivity = sens
             rightStickCurve = crv
         }
     }
+
+    private data class Tuple5<A, B, C, D, E>(val a: A, val b: B, val c: C, val d: D, val e: E)
 }

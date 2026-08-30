@@ -1291,6 +1291,16 @@ private fun AnalogSettingsSection(
         ControllerAxisSettings.TargetStick.RIGHT -> settings.rightStickDeadzone
         ControllerAxisSettings.TargetStick.BOTH -> settings.leftStickDeadzone
     }
+    val currentAntiDeadzone = when (targetStick) {
+        ControllerAxisSettings.TargetStick.LEFT -> settings.leftStickAntiDeadzone
+        ControllerAxisSettings.TargetStick.RIGHT -> settings.rightStickAntiDeadzone
+        ControllerAxisSettings.TargetStick.BOTH -> settings.leftStickAntiDeadzone
+    }
+    val currentMidpoint = when (targetStick) {
+        ControllerAxisSettings.TargetStick.LEFT -> settings.leftStickMidpoint
+        ControllerAxisSettings.TargetStick.RIGHT -> settings.rightStickMidpoint
+        ControllerAxisSettings.TargetStick.BOTH -> settings.leftStickMidpoint
+    }
     val currentOuterDeadzone = when (targetStick) {
         ControllerAxisSettings.TargetStick.LEFT -> settings.leftStickOuterDeadzone
         ControllerAxisSettings.TargetStick.RIGHT -> settings.rightStickOuterDeadzone
@@ -1368,6 +1378,30 @@ private fun AnalogSettingsSection(
             if (rounded < updated.rightStickDeadzone + 0.05f) {
                 updated.rightStickDeadzone = (rounded - 0.05f).coerceIn(0.00f, 0.50f)
             }
+        }
+        onSettingsChanged(updated)
+    }
+
+    fun updateAntiDeadzone(newVal: Float) {
+        val rounded = Math.round(newVal * 100f) / 100f
+        val updated = settings.copy()
+        if (targetStick == ControllerAxisSettings.TargetStick.BOTH || targetStick == ControllerAxisSettings.TargetStick.LEFT) {
+            updated.leftStickAntiDeadzone = rounded
+        }
+        if (targetStick == ControllerAxisSettings.TargetStick.BOTH || targetStick == ControllerAxisSettings.TargetStick.RIGHT) {
+            updated.rightStickAntiDeadzone = rounded
+        }
+        onSettingsChanged(updated)
+    }
+
+    fun updateMidpoint(newVal: Float) {
+        val rounded = Math.round(newVal * 100f) / 100f
+        val updated = settings.copy()
+        if (targetStick == ControllerAxisSettings.TargetStick.BOTH || targetStick == ControllerAxisSettings.TargetStick.LEFT) {
+            updated.leftStickMidpoint = rounded
+        }
+        if (targetStick == ControllerAxisSettings.TargetStick.BOTH || targetStick == ControllerAxisSettings.TargetStick.RIGHT) {
+            updated.rightStickMidpoint = rounded
         }
         onSettingsChanged(updated)
     }
@@ -1487,6 +1521,16 @@ private fun AnalogSettingsSection(
         "lt" -> settings.leftTriggerDeadzone
         else -> settings.rightTriggerDeadzone
     }
+    val compAntiDeadzone: Float = when (activeComponent) {
+        "ls" -> settings.leftStickAntiDeadzone
+        "rs" -> settings.rightStickAntiDeadzone
+        else -> 0.0f
+    }
+    val compMidpoint: Float = when (activeComponent) {
+        "ls" -> settings.leftStickMidpoint
+        "rs" -> settings.rightStickMidpoint
+        else -> 0.50f
+    }
     val compCutoff: Float = when (activeComponent) {
         "ls" -> settings.leftStickOuterDeadzone
         "rs" -> settings.rightStickOuterDeadzone
@@ -1543,7 +1587,12 @@ private fun AnalogSettingsSection(
         else {
             val denom = (compCutoff - compDeadzone).coerceAtLeast(0.01f)
             val norm = ((compInput - compDeadzone) / denom).coerceIn(0f, 1f)
-            (Math.pow(norm.toDouble(), compCurve.toDouble()).toFloat() * compSensitivity).coerceIn(0f, 1f)
+            ControllerAxisSettings.evaluateStickCurve(
+                norm,
+                compAntiDeadzone,
+                compMidpoint,
+                compSensitivity
+            )
         }
     }
 
@@ -1780,6 +1829,8 @@ private fun AnalogSettingsSection(
                                 rawX = liveStickLX,
                                 rawY = liveStickLY,
                                 deadzone = settings.leftStickDeadzone,
+                                antiDeadzone = settings.leftStickAntiDeadzone,
+                                midpoint = settings.leftStickMidpoint,
                                 outerDeadzone = settings.leftStickOuterDeadzone,
                                 sensitivity = settings.leftStickSensitivity,
                                 curve = settings.leftStickCurve,
@@ -1799,6 +1850,8 @@ private fun AnalogSettingsSection(
                                 rawX = liveStickRX,
                                 rawY = liveStickRY,
                                 deadzone = settings.rightStickDeadzone,
+                                antiDeadzone = settings.rightStickAntiDeadzone,
+                                midpoint = settings.rightStickMidpoint,
                                 outerDeadzone = settings.rightStickOuterDeadzone,
                                 sensitivity = settings.rightStickSensitivity,
                                 curve = settings.rightStickCurve,
@@ -1883,6 +1936,16 @@ private fun AnalogSettingsSection(
                                     drawLine(color = Color(0xFFF59E0B), start = Offset(threshX, h), end = Offset(threshX, 2f), strokeWidth = 2.5f)
                                     drawLine(color = Color(0xFFF59E0B), start = Offset(threshX, 2f), end = Offset(w, 2f), strokeWidth = 2.5f)
                                 } else {
+                                    // Draw Knee Point Marker for sticks at 50%
+                                    if (!isTriggerComponent) {
+                                        val kneeInput = compDeadzone + 0.5f * (compCutoff - compDeadzone)
+                                        val kneeOutput = (compAntiDeadzone + (1f - compAntiDeadzone) * compMidpoint) * compSensitivity
+                                        val kx = kneeInput * w
+                                        val ky = h - (kneeOutput.coerceIn(0f, 1f) * (h - 4f)) - 2f
+                                        drawCircle(color = compColor.copy(alpha = 0.4f), radius = 5f, center = Offset(kx, ky))
+                                        drawCircle(color = compColor, radius = 2.5f, center = Offset(kx, ky))
+                                    }
+
                                     val path = Path()
                                     val steps = 30
                                     val denom = (compCutoff - compDeadzone).coerceAtLeast(0.01f)
@@ -1891,8 +1954,17 @@ private fun AnalogSettingsSection(
                                         val output = if (input <= compDeadzone) 0f
                                         else {
                                             val norm = ((input - compDeadzone) / denom).coerceIn(0f, 1f)
-                                            val curved = Math.pow(norm.toDouble(), compCurve.toDouble()).toFloat()
-                                            (curved * compSensitivity).coerceIn(0f, 1f)
+                                            if (isTriggerComponent) {
+                                                val curved = Math.pow(norm.toDouble(), compCurve.toDouble()).toFloat()
+                                                (curved * compSensitivity).coerceIn(0f, 1f)
+                                            } else {
+                                                ControllerAxisSettings.evaluateStickCurve(
+                                                    norm,
+                                                    compAntiDeadzone,
+                                                    compMidpoint,
+                                                    compSensitivity
+                                                )
+                                            }
                                         }
                                         val x = input * w
                                         val y = h - (output * (h - 4f)) - 2f
@@ -1950,9 +2022,9 @@ private fun AnalogSettingsSection(
                                     )
                                 }
                                 Text(
-                                    text = "DZ:${(settings.leftStickDeadzone * 100).toInt()}% • Max:${(settings.leftStickOuterDeadzone * 100).toInt()}% • S:${settings.leftStickSensitivity}x • C:${settings.leftStickCurve}",
+                                    text = "DZ:${(settings.leftStickDeadzone * 100).toInt()}% • Anti:${(settings.leftStickAntiDeadzone * 100).toInt()}% • Mid:${(settings.leftStickMidpoint * 100).toInt()}% • Max:${(settings.leftStickOuterDeadzone * 100).toInt()}% • S:${settings.leftStickSensitivity}x",
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontSize = androidx.compose.ui.unit.TextUnit(9f, androidx.compose.ui.unit.TextUnitType.Sp),
+                                    fontSize = androidx.compose.ui.unit.TextUnit(8.5f, androidx.compose.ui.unit.TextUnitType.Sp),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -1988,9 +2060,9 @@ private fun AnalogSettingsSection(
                                     )
                                 }
                                 Text(
-                                    text = "DZ:${(settings.rightStickDeadzone * 100).toInt()}% • Max:${(settings.rightStickOuterDeadzone * 100).toInt()}% • S:${settings.rightStickSensitivity}x • C:${settings.rightStickCurve}",
+                                    text = "DZ:${(settings.rightStickDeadzone * 100).toInt()}% • Anti:${(settings.rightStickAntiDeadzone * 100).toInt()}% • Mid:${(settings.rightStickMidpoint * 100).toInt()}% • Max:${(settings.rightStickOuterDeadzone * 100).toInt()}% • S:${settings.rightStickSensitivity}x",
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontSize = androidx.compose.ui.unit.TextUnit(9f, androidx.compose.ui.unit.TextUnitType.Sp),
+                                    fontSize = androidx.compose.ui.unit.TextUnit(8.5f, androidx.compose.ui.unit.TextUnitType.Sp),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -2210,19 +2282,21 @@ private fun AnalogSettingsSection(
                                 onDismissRequest = { showStickPresetsMenu = false },
                                 modifier = Modifier.widthIn(min = 320.dp)
                             ) {
-                                fun applyStickPreset(dz: Float, outer: Float, sens: Float, crv: Float) {
+                                fun applyStickPreset(dz: Float, anti: Float, mid: Float, outer: Float, sens: Float) {
                                     val updated = settings.copy()
                                     if (targetStick == ControllerAxisSettings.TargetStick.BOTH || targetStick == ControllerAxisSettings.TargetStick.LEFT) {
                                         updated.leftStickDeadzone = dz
+                                        updated.leftStickAntiDeadzone = anti
+                                        updated.leftStickMidpoint = mid
                                         updated.leftStickOuterDeadzone = outer
                                         updated.leftStickSensitivity = sens
-                                        updated.leftStickCurve = crv
                                     }
                                     if (targetStick == ControllerAxisSettings.TargetStick.BOTH || targetStick == ControllerAxisSettings.TargetStick.RIGHT) {
                                         updated.rightStickDeadzone = dz
+                                        updated.rightStickAntiDeadzone = anti
+                                        updated.rightStickMidpoint = mid
                                         updated.rightStickOuterDeadzone = outer
                                         updated.rightStickSensitivity = sens
-                                        updated.rightStickCurve = crv
                                     }
                                     onSettingsChanged(updated)
                                     showStickPresetsMenu = false
@@ -2232,120 +2306,100 @@ private fun AnalogSettingsSection(
                                     text = {
                                         Column {
                                             Text("🎯 Default Linear", fontWeight = FontWeight.Bold)
-                                            Text("DZ 5% • Outer 100% • Sens 1.00x • Curve 1.00 (100% Output)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("DZ 5% • Anti 0% • Mid 50% (Linear) • Max 100%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
-                                    onClick = { applyStickPreset(0.05f, 1.00f, 1.00f, 1.00f) }
-                                )
-
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text("⚔️ Action RPG & Free Look", fontWeight = FontWeight.Bold)
-                                            Text("DZ 4% • Outer 98% • Sens 1.00x • Curve 1.15 (Smooth 360°)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = { applyStickPreset(0.04f, 0.98f, 1.00f, 1.15f) }
-                                )
-
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text("🏎️ Racing / Smooth Steer", fontWeight = FontWeight.Bold)
-                                            Text("DZ 6% • Outer 98% • Sens 1.00x • Curve 0.80 (Full Wheel Lock)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = { applyStickPreset(0.06f, 0.98f, 1.00f, 0.80f) }
+                                    onClick = { applyStickPreset(0.05f, 0.00f, 0.50f, 1.00f, 1.00f) }
                                 )
 
                                 DropdownMenuItem(
                                     text = {
                                         Column {
                                             Text("🔫 FPS Balanced Aim", fontWeight = FontWeight.Bold)
-                                            Text("DZ 3% • Outer 95% • Sens 1.00x • Curve 1.25 (Steady Tracking)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("DZ 3% • Anti 10% (No Flatline) • Mid 35% (Steady Aim) • Max 95%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
-                                    onClick = { applyStickPreset(0.03f, 0.95f, 1.00f, 1.25f) }
+                                    onClick = { applyStickPreset(0.03f, 0.10f, 0.35f, 0.95f, 1.00f) }
+                                )
+
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text("⚔️ Action RPG & Free Look", fontWeight = FontWeight.Bold)
+                                            Text("DZ 4% • Anti 8% • Mid 40% (Smooth 360°) • Max 98%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = { applyStickPreset(0.04f, 0.08f, 0.40f, 0.98f, 1.00f) }
+                                )
+
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text("🏎️ Racing / Smooth Steer", fontWeight = FontWeight.Bold)
+                                            Text("DZ 5% • Anti 5% • Mid 45% • Max 98%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = { applyStickPreset(0.05f, 0.05f, 0.45f, 0.98f, 1.00f) }
                                 )
 
                                 DropdownMenuItem(
                                     text = {
                                         Column {
                                             Text("🎯 Micro-Aim Sniper", fontWeight = FontWeight.Bold)
-                                            Text("DZ 2% • Outer 95% • Sens 1.00x • Curve 1.85 (Pixel Micro-Aim)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("DZ 2% • Anti 8% • Mid 25% (Pixel Micro-Aim) • Max 95%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
-                                    onClick = { applyStickPreset(0.02f, 0.95f, 1.00f, 1.85f) }
+                                    onClick = { applyStickPreset(0.02f, 0.08f, 0.25f, 0.95f, 1.00f) }
                                 )
 
                                 DropdownMenuItem(
                                     text = {
                                         Column {
                                             Text("🍄 2D Platformer & Retro", fontWeight = FontWeight.Bold)
-                                            Text("DZ 2% • Outer 85% • Sens 1.00x • Curve 0.90 (Early 100% Run)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("DZ 2% • Anti 10% • Mid 60% (Snappy Run) • Max 85%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
-                                    onClick = { applyStickPreset(0.02f, 0.85f, 1.00f, 0.90f) }
+                                    onClick = { applyStickPreset(0.02f, 0.10f, 0.60f, 0.85f, 1.00f) }
                                 )
 
                                 DropdownMenuItem(
                                     text = {
                                         Column {
                                             Text("🥊 Fighting & Arcade", fontWeight = FontWeight.Bold)
-                                            Text("DZ 2% • Outer 80% • Sens 1.00x • Curve 0.85 (Fast Specials 236/623)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("DZ 2% • Anti 15% • Mid 65% (Fast Specials 236/623) • Max 80%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
-                                    onClick = { applyStickPreset(0.02f, 0.80f, 1.00f, 0.85f) }
+                                    onClick = { applyStickPreset(0.02f, 0.15f, 0.65f, 0.80f, 1.00f) }
                                 )
 
                                 DropdownMenuItem(
                                     text = {
                                         Column {
                                             Text("✈️ Flight & Space Sim", fontWeight = FontWeight.Bold)
-                                            Text("DZ 4% • Outer 98% • Sens 1.00x • Curve 1.50 (Gentle Center/100% Pitch)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("DZ 4% • Anti 5% • Mid 35% (Gentle Pitch) • Max 98%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
-                                    onClick = { applyStickPreset(0.04f, 0.98f, 1.00f, 1.50f) }
+                                    onClick = { applyStickPreset(0.04f, 0.05f, 0.35f, 0.98f, 1.00f) }
                                 )
 
                                 DropdownMenuItem(
                                     text = {
                                         Column {
                                             Text("⚡ High-Speed Flick Aim", fontWeight = FontWeight.Bold)
-                                            Text("DZ 1% • Outer 95% • Sens 1.35x • Curve 0.90 (Aggressive Twitch)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("DZ 1% • Anti 12% • Mid 60% • Max 95% • Sens 1.25x", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
-                                    onClick = { applyStickPreset(0.01f, 0.95f, 1.35f, 0.90f) }
-                                )
-
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text("🏃 Fast Sprint & Strafe", fontWeight = FontWeight.Bold)
-                                            Text("DZ 2% • Outer 88% • Sens 1.00x • Curve 1.00 (Instant 100% Sprint)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = { applyStickPreset(0.02f, 0.88f, 1.00f, 1.00f) }
-                                )
-
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text("🚶 Precision Walk / Sneak", fontWeight = FontWeight.Bold)
-                                            Text("DZ 6% • Outer 98% • Sens 1.00x • Curve 1.45 (Wide Sneak to 100% Run)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = { applyStickPreset(0.06f, 0.98f, 1.00f, 1.45f) }
+                                    onClick = { applyStickPreset(0.01f, 0.12f, 0.60f, 0.95f, 1.25f) }
                                 )
 
                                 DropdownMenuItem(
                                     text = {
                                         Column {
                                             Text("🛡️ Anti-Drift (Worn Sticks)", fontWeight = FontWeight.Bold)
-                                            Text("DZ 15% • Outer 100% • Sens 1.00x • Curve 1.00 (No Drift / Full 100%)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("DZ 15% • Anti 0% • Mid 50% • Max 100% (No Drift / Full Sprint)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
-                                    onClick = { applyStickPreset(0.15f, 1.00f, 1.00f, 1.00f) }
+                                    onClick = { applyStickPreset(0.15f, 0.00f, 0.50f, 1.00f, 1.00f) }
                                 )
                             }
                         }
@@ -2371,7 +2425,46 @@ private fun AnalogSettingsSection(
                             modifier = Modifier.onFocusChanged { if (it.isFocused) lastFocusedSection = "sticks" }
                         )
 
-                        // 2. Controller-Navigable Outer Deadzone Slider (70% - 100%)
+                        // 2. Controller-Navigable Anti-Deadzone Floor Slider (0% - 30%)
+                        ControllerSliderRow(
+                            label = "Anti-Deadzone",
+                            value = currentAntiDeadzone,
+                            onValueChange = {
+                                updateAntiDeadzone(it)
+                                lastActiveComponent = if (targetStick == ControllerAxisSettings.TargetStick.RIGHT) "rs" else "ls"
+                            },
+                            valueRange = 0.00f..0.30f,
+                            stepSize = 0.01f,
+                            displayValue = "${(currentAntiDeadzone * 100).toInt()}%",
+                            dialogTitle = "Set Stick Anti-Deadzone (%)",
+                            isPercentage = true,
+                            minVal = 0.00f,
+                            maxVal = 0.30f,
+                            activeColor = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.onFocusChanged { if (it.isFocused) lastFocusedSection = "sticks" }
+                        )
+
+                        // 3. Controller-Navigable Midpoint (50% Tilt) Slider (10% - 90%)
+                        val midLabel = if (currentMidpoint == 0.50f) "50% (Linear)" else if (currentMidpoint < 0.50f) "${(currentMidpoint * 100).toInt()}% (Gentle Aim)" else "${(currentMidpoint * 100).toInt()}% (Fast)"
+                        ControllerSliderRow(
+                            label = "Midpoint (50% Tilt)",
+                            value = currentMidpoint,
+                            onValueChange = {
+                                updateMidpoint(it)
+                                lastActiveComponent = if (targetStick == ControllerAxisSettings.TargetStick.RIGHT) "rs" else "ls"
+                            },
+                            valueRange = 0.10f..0.90f,
+                            stepSize = 0.01f,
+                            displayValue = midLabel,
+                            dialogTitle = "Set Stick Midpoint Output (%)",
+                            isPercentage = true,
+                            minVal = 0.10f,
+                            maxVal = 0.90f,
+                            activeColor = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.onFocusChanged { if (it.isFocused) lastFocusedSection = "sticks" }
+                        )
+
+                        // 4. Controller-Navigable Outer Deadzone Slider (70% - 100%)
                         ControllerSliderRow(
                             label = "Outer DZ",
                             value = currentOuterDeadzone,
@@ -2390,7 +2483,7 @@ private fun AnalogSettingsSection(
                             modifier = Modifier.onFocusChanged { if (it.isFocused) lastFocusedSection = "sticks" }
                         )
 
-                        // 3. Controller-Navigable Sensitivity Slider (0.25x - 3.00x)
+                        // 5. Controller-Navigable Sensitivity Slider (0.25x - 3.00x)
                         ControllerSliderRow(
                             label = "Sensitivity",
                             value = currentSensitivity,
@@ -2405,25 +2498,6 @@ private fun AnalogSettingsSection(
                             isPercentage = false,
                             minVal = 0.25f,
                             maxVal = 3.00f,
-                            activeColor = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.onFocusChanged { if (it.isFocused) lastFocusedSection = "sticks" }
-                        )
-
-                        // 4. Controller-Navigable Response Curve Slider (0.20 - 4.00)
-                        ControllerSliderRow(
-                            label = "Curve",
-                            value = currentCurve,
-                            onValueChange = {
-                                updateCurve(it)
-                                lastActiveComponent = if (targetStick == ControllerAxisSettings.TargetStick.RIGHT) "rs" else "ls"
-                            },
-                            valueRange = 0.20f..4.00f,
-                            stepSize = 0.05f,
-                            displayValue = String.format(java.util.Locale.US, "%.2f", currentCurve),
-                            dialogTitle = "Set Stick Response Curve",
-                            isPercentage = false,
-                            minVal = 0.20f,
-                            maxVal = 4.00f,
                             activeColor = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.onFocusChanged { if (it.isFocused) lastFocusedSection = "sticks" }
                         )
@@ -3152,6 +3226,8 @@ private fun ExpandedLiveHudDialog(
                                                 rawX = dialogStickLX,
                                                 rawY = dialogStickLY,
                                                 deadzone = settings.leftStickDeadzone,
+                                                antiDeadzone = settings.leftStickAntiDeadzone,
+                                                midpoint = settings.leftStickMidpoint,
                                                 outerDeadzone = settings.leftStickOuterDeadzone,
                                                 sensitivity = settings.leftStickSensitivity,
                                                 curve = settings.leftStickCurve,
@@ -3175,9 +3251,10 @@ private fun ExpandedLiveHudDialog(
                                             )
                                             Column(horizontalAlignment = Alignment.Start) {
                                                 Text("Deadzone: ${(settings.leftStickDeadzone * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
+                                                Text("Anti-DZ: ${(settings.leftStickAntiDeadzone * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
+                                                Text("Midpoint: ${(settings.leftStickMidpoint * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
                                                 Text("Outer DZ: ${(settings.leftStickOuterDeadzone * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
                                                 Text("Sensitivity: ${String.format(java.util.Locale.US, "%.2fx", settings.leftStickSensitivity)}", style = MaterialTheme.typography.labelSmall)
-                                                Text("Curve: ${String.format(java.util.Locale.US, "%.2f", settings.leftStickCurve)}", style = MaterialTheme.typography.labelSmall)
                                             }
                                         }
 
@@ -3191,6 +3268,8 @@ private fun ExpandedLiveHudDialog(
                                                 rawX = dialogStickRX,
                                                 rawY = dialogStickRY,
                                                 deadzone = settings.rightStickDeadzone,
+                                                antiDeadzone = settings.rightStickAntiDeadzone,
+                                                midpoint = settings.rightStickMidpoint,
                                                 outerDeadzone = settings.rightStickOuterDeadzone,
                                                 sensitivity = settings.rightStickSensitivity,
                                                 curve = settings.rightStickCurve,
@@ -3845,9 +3924,11 @@ private fun StickRadarCrosshair(
     rawX: Float,
     rawY: Float,
     deadzone: Float,
+    antiDeadzone: Float = 0.0f,
+    midpoint: Float = 0.50f,
     outerDeadzone: Float = 1.0f,
     sensitivity: Float,
-    curve: Float,
+    curve: Float = 1.0f,
     badgeColor: Color,
     radarSize: androidx.compose.ui.unit.Dp = 62.dp,
     showCoordinates: Boolean = false,
@@ -3862,15 +3943,19 @@ private fun StickRadarCrosshair(
 
     var draggingTarget by remember { mutableStateOf<String?>(null) } // "inner", "outer", null
 
-    // Calculate processed output with outer deadzone normalization
+    // Calculate processed output with outer deadzone normalization and midpoint spline
     val rawMagnitude = Math.sqrt((rawX * rawX + rawY * rawY).toDouble()).toFloat()
     val (outX, outY) = if (rawMagnitude <= deadzone || rawMagnitude == 0f) {
         Pair(0f, 0f)
     } else {
         val denom = (outerDeadzone - deadzone).coerceAtLeast(0.01f)
         val normalized = ((rawMagnitude - deadzone) / denom).coerceIn(0f, 1f)
-        val curved = Math.pow(normalized.toDouble(), curve.toDouble()).toFloat()
-        val scaledMagnitude = (curved * sensitivity).coerceIn(0f, 1f)
+        val scaledMagnitude = ControllerAxisSettings.evaluateStickCurve(
+            normalized,
+            antiDeadzone,
+            midpoint,
+            sensitivity
+        )
         val factor = scaledMagnitude / rawMagnitude
         Pair((rawX * factor).coerceIn(-1f, 1f), (rawY * factor).coerceIn(-1f, 1f))
     }
