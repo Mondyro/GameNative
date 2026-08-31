@@ -93,7 +93,7 @@ class PhysicalControllerHandler(
      * Extracted from InputControlsView.onKeyEvent()
      */
     fun onKeyEvent(event: KeyEvent): Boolean {
-        if (profile != null && event.repeatCount == 0) {
+        if (profile != null) {
             if (radialMenuPressed && !isRadialMenuOpenerDevice(event.deviceId)) return true
             val controller = profile?.getController(event.deviceId)
             if (controller != null) {
@@ -119,6 +119,10 @@ class PhysicalControllerHandler(
                 }
 
                 if (controllerBinding != null) {
+                    // Consume auto-repeat events so they don't fall through to the keyboard queue and cause rapid-fire toggling
+                    if (event.repeatCount > 0) {
+                        return true
+                    }
                     // Some controllers emit BOTH a digital KeyEvent for L2/R2 and an analog axis value in MotionEvent.
                     // If this physical key is mapped to a virtual trigger AND the device exposes trigger axes,
                     // ignore the KeyEvent to avoid an initial "full press" spike. MotionEvent will provide the analog value.
@@ -227,6 +231,22 @@ class PhysicalControllerHandler(
 
                 // Process analog stick input
                 processJoystickInput(controller, event.deviceId)
+
+                // Directly sync controller state and notify WinHandler
+                val gamepadState = profile?.gamepadState
+                if (gamepadState != null) {
+                    xServer?.winHandler?.let { wh ->
+                        val currentCtrl = wh.currentController
+                        if (currentCtrl != null) {
+                            currentCtrl.state.thumbLX = gamepadState.thumbLX
+                            currentCtrl.state.thumbLY = gamepadState.thumbLY
+                            currentCtrl.state.thumbRX = gamepadState.thumbRX
+                            currentCtrl.state.thumbRY = gamepadState.thumbRY
+                            currentCtrl.state.triggerL = gamepadState.triggerL
+                            currentCtrl.state.triggerR = gamepadState.triggerR
+                        }
+                    }
+                }
 
                 sendGamepadState()
                 return true

@@ -188,8 +188,10 @@ public class InputControlsView extends View {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        if (profile != null && profile.isElementsLoaded() && oldw > 0 && w != oldw) {
+        snappingSize = (int)Math.max(1, w / 100.0f);
+        if (profile != null && profile.isElementsLoaded() && (w != oldw || h != oldh)) {
             profile.loadElements(this);
+            invalidate();
         }
     }
 

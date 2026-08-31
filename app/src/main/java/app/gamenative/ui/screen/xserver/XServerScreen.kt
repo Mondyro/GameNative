@@ -1666,6 +1666,7 @@ fun XServerScreen(
                     val device = it.event.device
                     val isExternal = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) device.isExternal else true
                     if (device.supportsSource(InputDevice.SOURCE_TOUCHPAD) &&
+                        !device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN) &&
                         !isExternal) {
                         // Samsung DeX Touchpad app
                         hasInternalTouchpad = true
