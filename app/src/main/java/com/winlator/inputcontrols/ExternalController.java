@@ -43,6 +43,15 @@ public class ExternalController {
     private String name;
     private int deviceId = -1;
     private byte triggerType = TRIGGER_IS_AXIS;
+    private ControllerAxisSettings axisSettings;
+
+    public ControllerAxisSettings getAxisSettings() {
+        return axisSettings;
+    }
+
+    public void setAxisSettings(ControllerAxisSettings axisSettings) {
+        this.axisSettings = axisSettings;
+    }
     private final ArrayList<ExternalControllerBinding> controllerBindings = new ArrayList<>();
     public final GamepadState state = new GamepadState();
     private boolean processTriggerButtonOnMotionEvent = true;
